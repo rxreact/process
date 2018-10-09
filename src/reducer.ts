@@ -1,4 +1,4 @@
-import { Subject, Observable } from 'rxjs'
+import { Subject, Observable, merge } from 'rxjs'
 import { ViewModel } from '@rxreact/core'
 import { startWith, scan, tap, filter, map } from 'rxjs/operators'
 
@@ -50,6 +50,7 @@ interface WrappedState<S, SideEffects extends string> {
 
 export interface ViewModelReducer<S, A, SideEffects extends string> {
   initialState: S
+  inputs?: Observable<A>
   reducer: Reducer<S, A, SideEffects>
   sideEffects: SideEffectsObject<S, SideEffects>
 }
@@ -84,7 +85,8 @@ export function viewModelFromReducer<S, A, SideEffects extends string>(
 ): ViewModel<S, DispatchActions<A>> {
   const { initialState, reducer } = viewModelReducer
   const dispatch: Subject<A> = new Subject()
-  const state: Observable<S> = dispatch.pipe(
+  const actions = viewModelReducer.inputs ? merge(dispatch, viewModelReducer.inputs) : dispatch
+  const state: Observable<S> = actions.pipe(
     scan<A, WrappedState<S, SideEffects>>(
       (wrappedState, action) => {
         const reducerResult = reducer(wrappedState.state, action)

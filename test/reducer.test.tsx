@@ -2,6 +2,7 @@ import * as React from 'react'
 import { withViewModel } from '@rxreact/core'
 import { mount, ReactWrapper } from 'enzyme'
 import { ReducerResult, viewModelFromReducer } from '../src/reducer'
+import { Subject } from 'rxjs'
 
 interface State {
   count: number
@@ -24,12 +25,15 @@ type Action =
       payload: string
     }
 
+let inputs = new Subject<Action>()
+
 let viewModel = viewModelFromReducer<State, Action, never>({
   initialState: {
     count: 2,
     fruit: 'bananas',
     extra: 'applesauce'
   },
+  inputs,
   reducer(state, action) {
     switch (action.type) {
       case ActionType.SET_COUNT:
@@ -86,7 +90,7 @@ describe('viewModelFromReducer', () => {
   let rendered: ReactWrapper<any, any>
 
   beforeEach(() => {
-    let ComponentWithViewModel = withViewModel(viewModel, Component)
+    let ComponentWithViewModel = withViewModel(viewModel)(Component)
     rendered = mount(<ComponentWithViewModel otherProp={'cheese'} />)
   })
   afterEach(() => {
@@ -106,6 +110,19 @@ describe('viewModelFromReducer', () => {
       expect(rendered.find('#state').text()).toContain('We have 6 bananas')
       rendered.find('#string-button').simulate('click')
       expect(rendered.find('#state').text()).toContain('We have 6 apples')
+    })
+  })
+
+  describe('when inputs observable updates', () => {
+    beforeEach(() => {
+      inputs.next({
+        type: ActionType.SET_FRUIT,
+        payload: 'pears'
+      })
+    })
+
+    it('updates state from external inputs', () => {
+      expect(rendered.find('#state').text()).toContain('We have 2 pears')
     })
   })
 
