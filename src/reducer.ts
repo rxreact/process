@@ -1,132 +1,86 @@
 import { Subject, Observable, merge } from 'rxjs'
-import { ViewModel } from '@rxreact/core'
-import { startWith, scan, tap, filter, map } from 'rxjs/operators'
+import { ViewModel, SubjectMap, ObservableMap } from '@rxreact/core'
+import {
+  startWith,
+  scan,
+  tap,
+  filter,
+  map,
+  withLatestFrom,
+  distinctUntilChanged,
+  shareReplay
+} from 'rxjs/operators'
 
-export enum ReducerResultStatus {
-  NoUpdate,
-  Update,
-  SideEffects,
-  UpdateWithSideEffects
-}
+export type Reducer<S, P> = (state: S, payload: P) => S
 
-export interface ReducerResultNoUpdate {
-  type: ReducerResultStatus.NoUpdate
-}
+export type Reducers<S, A> = { [K in keyof A]: Reducer<S, A[K]> }
 
-export interface ReducerResultUpdate<S> {
-  type: ReducerResultStatus.Update
-  state: S
-}
+export type ReductionMap<S, A> = { [K in keyof A]: Observable<S> }
 
-export interface ReducerResultSideEffects<SideEffects extends string> {
-  type: ReducerResultStatus.SideEffects
-  sideEffects: SideEffects[]
-}
+export type Selector<S, P> = (state: S) => P
 
-export interface ReducerResultUpdateWithSideEffects<S, SideEffects extends string> {
-  type: ReducerResultStatus.UpdateWithSideEffects
-  state: S
-  sideEffects: SideEffects[]
-}
+export type Selectors<S, O> = { [K in keyof O]: Selector<S, O[K]> }
 
-export type ReducerResultType<S, SideEffects extends string> =
-  | ReducerResultNoUpdate
-  | ReducerResultUpdate<S>
-  | ReducerResultSideEffects<SideEffects>
-  | ReducerResultUpdateWithSideEffects<S, SideEffects>
-
-export type Reducer<S, A, SideEffects extends string> = (
-  state: S,
-  action: A
-) => ReducerResultType<S, SideEffects>
-
-export type SideEffectsObject<S, SideEffects extends string> = { [K in SideEffects]: Subject<S> }
-
-interface WrappedState<S, SideEffects extends string> {
-  type: ReducerResultStatus
-  state: S
-  sideEffects: SideEffects[]
-}
-
-export interface ViewModelReducer<S, A, SideEffects extends string> {
+export interface ViewModelWithState<S, A, O> {
   initialState: S
-  inputs?: Observable<A>
-  reducer: Reducer<S, A, SideEffects>
-  sideEffects: SideEffectsObject<S, SideEffects>
+  reducers: Reducers<S, A>
+  selectors: Selectors<S, O>
+}
+export const assoc = <S, P extends keyof S>(k: P, v: S[P], existing: S): S => {
+  return Object.assign({}, existing, { [k]: v })
 }
 
-export type DispatchActions<A> = {
-  dispatch: A
+export function transformValues<T>(transform: (x: keyof T) => T[keyof T], list: (keyof T)[]): T
+export function transformValues<T, U>(
+  transform: (x: T[keyof T & keyof U], key: keyof T & keyof U) => U[keyof T & keyof U],
+  list: T
+): U
+export function transformValues<T, U>(
+  transform: (x: T[keyof T & keyof U], key: keyof T & keyof U) => U[keyof T & keyof U],
+  list: T
+): U {
+  return Array.isArray(list)
+    ? list.reduce<U>((acc, cur) => assoc(cur, transform(cur, cur), acc), {} as U)
+    : ((Object.keys(list) as (keyof T & keyof U)[]).reduce<Partial<U>>(
+        (acc, cur) => assoc(cur, transform(list[cur], cur), acc),
+        {}
+      ) as U)
 }
 
-export const ReducerResult = {
-  NoUpdate: (): ReducerResultNoUpdate => ({ type: ReducerResultStatus.NoUpdate }),
-  SideEffects: <SideEffects extends string>(
-    sideEffects: SideEffects[]
-  ): ReducerResultSideEffects<SideEffects> => ({
-    type: ReducerResultStatus.SideEffects,
-    sideEffects
-  }),
-  Update: <State>(state: State): ReducerResultUpdate<State> => ({
-    type: ReducerResultStatus.Update,
-    state
-  }),
-  UpdateWithSideEffects: <State, SideEffects extends string>(
-    state: State,
-    sideEffects: SideEffects[]
-  ): ReducerResultUpdateWithSideEffects<State, SideEffects> => ({
-    type: ReducerResultStatus.UpdateWithSideEffects,
-    state,
-    sideEffects
-  })
-}
-export function viewModelFromReducer<S, A, SideEffects extends string>(
-  viewModelReducer: ViewModelReducer<S, A, SideEffects>
-): ViewModel<S, DispatchActions<A>> {
-  const { initialState, reducer } = viewModelReducer
-  const dispatch: Subject<A> = new Subject()
-  const actions = viewModelReducer.inputs ? merge(dispatch, viewModelReducer.inputs) : dispatch
-  const state: Observable<S> = actions.pipe(
-    scan<A, WrappedState<S, SideEffects>>(
-      (wrappedState, action) => {
-        const reducerResult = reducer(wrappedState.state, action)
-        const state =
-          reducerResult.type === ReducerResultStatus.Update ||
-          reducerResult.type === ReducerResultStatus.UpdateWithSideEffects
-            ? reducerResult.state
-            : wrappedState.state
-        const sideEffects =
-          reducerResult.type === ReducerResultStatus.SideEffects ||
-          reducerResult.type === ReducerResultStatus.UpdateWithSideEffects
-            ? reducerResult.sideEffects
-            : []
-        return { type: reducerResult.type, state, sideEffects }
-      },
-      {
-        type: ReducerResultStatus.Update,
-        state: viewModelReducer.initialState,
-        sideEffects: []
-      }
-    ),
-    tap(wrappedState => {
-      if ([ReducerResultStatus.NoUpdate, ReducerResultStatus.Update].includes(wrappedState.type)) {
-        return
-      }
-      wrappedState.sideEffects.forEach(sideEffect =>
-        viewModelReducer.sideEffects[sideEffect].next(wrappedState.state)
-      )
-    }),
-    filter(wrappedState =>
-      [ReducerResultStatus.Update, ReducerResultStatus.UpdateWithSideEffects].includes(
-        wrappedState.type
-      )
-    ),
-    map(wrappedState => wrappedState.state),
-    startWith(initialState)
+export function viewModelWithState<S, A, O>(
+  viewModelReducer: ViewModelWithState<S, A, O>
+): ViewModel<O, A> {
+  const { initialState, reducers, selectors } = viewModelReducer
+  const actions = transformValues<Reducers<S, A>, SubjectMap<A>>(_ => new Subject(), reducers)
+  const stateInput = new Subject<S>()
+  const reductions = Object.values<Observable<S>>(
+    transformValues<SubjectMap<A>, ReductionMap<S, A>>(
+      (action, key) =>
+        action.pipe(
+          withLatestFrom(stateInput),
+          map(([payload, state]) => {
+            return reducers[key](state, payload)
+          })
+        ),
+      actions
+    )
+  )
+  const stateOutput = merge(...reductions).pipe(
+    startWith(initialState),
+    shareReplay(1)
+  )
+  stateOutput.subscribe(stateInput)
+  const selections = transformValues<Selectors<S, O>, ObservableMap<O>>(
+    selector =>
+      stateOutput.pipe(
+        map(selector),
+        distinctUntilChanged()
+      ),
+    selectors
   )
 
   return {
-    inputs: state,
-    outputs: { dispatch }
+    inputs: selections,
+    outputs: actions
   }
 }

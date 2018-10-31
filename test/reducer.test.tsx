@@ -1,8 +1,7 @@
 import * as React from 'react'
 import { withViewModel } from '@rxreact/core'
 import { mount, ReactWrapper } from 'enzyme'
-import { ReducerResult, viewModelFromReducer } from '../src/reducer'
-import { Subject } from 'rxjs'
+import { viewModelWithState } from '../src/reducer'
 
 interface State {
   count: number
@@ -10,80 +9,58 @@ interface State {
   extra: string
 }
 
-enum ActionType {
-  SET_COUNT,
-  SET_FRUIT
+interface Actions {
+  setCount: number
+  setFruit: string
 }
 
-type Action =
-  | {
-      type: ActionType.SET_COUNT
-      payload: number
-    }
-  | {
-      type: ActionType.SET_FRUIT
-      payload: string
-    }
+interface Selections {
+  summary: string
+}
 
-let inputs = new Subject<Action>()
-
-let viewModel = viewModelFromReducer<State, Action, never>({
+let viewModel = viewModelWithState<State, Actions, Selections>({
   initialState: {
     count: 2,
     fruit: 'bananas',
     extra: 'applesauce'
   },
-  inputs,
-  reducer(state, action) {
-    switch (action.type) {
-      case ActionType.SET_COUNT:
-        return ReducerResult.Update({ ...state, count: action.payload })
-      case ActionType.SET_FRUIT:
-        return ReducerResult.Update({ ...state, fruit: action.payload })
+  reducers: {
+    setCount: (state, count) => {
+      console.log(count)
+      return { ...state, count }
+    },
+    setFruit: (state, fruit) => {
+      return { ...state, fruit }
     }
   },
-  sideEffects: {}
+  selectors: {
+    summary: state => `${state.count} ${state.fruit} ${state.extra}`
+  }
 })
 
 interface ComponentProps {
   otherProp: string
-  count: number
-  fruit: string
-  extra: string
-  dispatch: (a: Action) => void
+  summary: string
+  setCount: (_: number) => void
+  setFruit: (_: string) => void
 }
 
-let Component: React.SFC<ComponentProps> = ({ otherProp, count, fruit, extra, dispatch }) => {
-  return (
-    <div>
-      <p id="other">{otherProp}</p>
-      <p id="state">
-        We have {count} {fruit} {extra}
-      </p>
-      <button
-        id="number-button"
-        onClick={() =>
-          dispatch({
-            type: ActionType.SET_COUNT,
-            payload: 6
-          })
-        }
-      >
-        Set the number of things to 6
-      </button>
-      <button
-        id="string-button"
-        onClick={() =>
-          dispatch({
-            type: ActionType.SET_FRUIT,
-            payload: 'apples'
-          })
-        }
-      >
-        Set the thing to be apples
-      </button>
-    </div>
-  )
+class Component extends React.Component<ComponentProps> {
+  render() {
+    const { otherProp, summary, setCount, setFruit } = this.props
+    return (
+      <div>
+        <p id="other">{otherProp}</p>
+        <p id="state">We have {summary}</p>
+        <button id="number-button" onClick={() => setCount(6)}>
+          Set the number of things to 6
+        </button>
+        <button id="string-button" onClick={() => setFruit('apples')}>
+          Set the thing to be apples
+        </button>
+      </div>
+    )
+  }
 }
 
 describe('viewModelFromReducer', () => {
@@ -100,6 +77,7 @@ describe('viewModelFromReducer', () => {
   it('renders passed in properties', () => {
     expect(rendered.find('#other').text()).toContain('cheese')
   })
+
   it('renders initial state', () => {
     expect(rendered.find('#state').text()).toContain('We have 2 bananas')
   })
@@ -110,19 +88,6 @@ describe('viewModelFromReducer', () => {
       expect(rendered.find('#state').text()).toContain('We have 6 bananas')
       rendered.find('#string-button').simulate('click')
       expect(rendered.find('#state').text()).toContain('We have 6 apples')
-    })
-  })
-
-  describe('when inputs observable updates', () => {
-    beforeEach(() => {
-      inputs.next({
-        type: ActionType.SET_FRUIT,
-        payload: 'pears'
-      })
-    })
-
-    it('updates state from external inputs', () => {
-      expect(rendered.find('#state').text()).toContain('We have 2 pears')
     })
   })
 
